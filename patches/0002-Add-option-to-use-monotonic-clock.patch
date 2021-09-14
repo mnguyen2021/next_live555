@@ -1,0 +1,761 @@
+From 47f2c4e61c8b6b05069482385f6c61f334a526b9 Mon Sep 17 00:00:00 2001
+From: charles <charles@au-zone.com>
+Date: Wed, 9 Nov 2016 10:25:37 -0700
+Subject: [PATCH] Add option to use monotonic clock
+
+---
+ BasicUsageEnvironment/DelayQueue.cpp                |  2 +-
+ .../WindowsAudioInputDevice_common.cpp              |  2 +-
+ groupsock/GroupsockHelper.cpp                       | 21 +++++++++++++++++----
+ groupsock/include/GroupsockHelper.hh                |  7 +------
+ liveMedia/AC3AudioStreamFramer.cpp                  |  2 +-
+ liveMedia/ADTSAudioFileSource.cpp                   |  2 +-
+ liveMedia/AMRAudioFileSource.cpp                    |  2 +-
+ liveMedia/AVIFileSink.cpp                           |  2 +-
+ liveMedia/BasicUDPSink.cpp                          |  4 ++--
+ liveMedia/ByteStreamFileSource.cpp                  |  4 ++--
+ liveMedia/ByteStreamMemoryBufferSource.cpp          |  4 ++--
+ liveMedia/DVVideoStreamFramer.cpp                   |  2 +-
+ liveMedia/DeviceSource.cpp                          |  4 ++--
+ liveMedia/DigestAuthentication.cpp                  |  4 ++--
+ liveMedia/H263plusVideoStreamFramer.cpp             |  2 +-
+ liveMedia/MP3StreamState.cpp                        |  2 +-
+ liveMedia/MPEG1or2AudioStreamFramer.cpp             |  2 +-
+ liveMedia/MPEG2TransportStreamFramer.cpp            |  4 ++--
+ liveMedia/MPEGVideoStreamFramer.cpp                 |  2 +-
+ liveMedia/MatroskaFileParser.cpp                    |  4 ++--
+ liveMedia/MultiFramedRTPSink.cpp                    |  4 ++--
+ liveMedia/MultiFramedRTPSource.cpp                  |  4 ++--
+ liveMedia/OggFileParser.cpp                         |  4 ++--
+ liveMedia/PassiveServerMediaSubsession.cpp          |  2 +-
+ liveMedia/ProxyServerMediaSession.cpp               |  2 +-
+ liveMedia/QuickTimeFileSink.cpp                     |  4 ++--
+ liveMedia/RTCP.cpp                                  |  6 +++---
+ liveMedia/RTPSink.cpp                               | 10 +++++-----
+ liveMedia/RTPSource.cpp                             |  4 ++--
+ liveMedia/RTSPClient.cpp                            |  2 +-
+ liveMedia/ServerMediaSession.cpp                    |  2 +-
+ liveMedia/T140TextRTPSink.cpp                       |  4 ++--
+ liveMedia/WAVAudioFileSource.cpp                    |  2 +-
+ testProgs/playCommon.cpp                            | 14 +++++++-------
+ 34 files changed, 75 insertions(+), 67 deletions(-)
+
+diff --git a/BasicUsageEnvironment/DelayQueue.cpp b/BasicUsageEnvironment/DelayQueue.cpp
+index 17ec6f9..8aa1fa2 100644
+--- a/BasicUsageEnvironment/DelayQueue.cpp
++++ b/BasicUsageEnvironment/DelayQueue.cpp
+@@ -225,7 +225,7 @@ void DelayQueue::synchronize() {
+ _EventTime TimeNow() {
+   struct timeval tvNow;
+ 
+-  gettimeofday(&tvNow, NULL);
++  mygettimeofday(&tvNow, NULL);
+ 
+   return _EventTime(tvNow.tv_sec, tvNow.tv_usec);
+ }
+diff --git a/WindowsAudioInputDevice/WindowsAudioInputDevice_common.cpp b/WindowsAudioInputDevice/WindowsAudioInputDevice_common.cpp
+index 857de1c..db36f23 100644
+--- a/WindowsAudioInputDevice/WindowsAudioInputDevice_common.cpp
++++ b/WindowsAudioInputDevice/WindowsAudioInputDevice_common.cpp
+@@ -292,7 +292,7 @@ void WindowsAudioInputDevice_common::waveInProc(WAVEHDR* hdr) {
+ 
+   // Record the time that the data arrived:
+   int dontCare;
+-  gettimeofday(&readTimes[hdrIndex], &dontCare);
++  mygettimeofday(&readTimes[hdrIndex], &dontCare);
+ 
+   // Add the block to the tail of the queue:
+   hdr->lpNext = NULL;
+diff --git a/groupsock/GroupsockHelper.cpp b/groupsock/GroupsockHelper.cpp
+index 88f1c26..8cf1301 100644
+--- a/groupsock/GroupsockHelper.cpp
++++ b/groupsock/GroupsockHelper.cpp
+@@ -704,7 +704,7 @@ netAddressBits ourIPAddress(UsageEnvironment& env) {
+     // Use our newly-discovered IP address, and the current time,
+     // to initialize the random number generator's seed:
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+     unsigned seed = ourAddress^timeNow.tv_sec^timeNow.tv_usec;
+     our_srandom(seed);
+   }
+@@ -725,7 +725,7 @@ netAddressBits chooseRandomIPv4SSMAddress(UsageEnvironment& env) {
+ 
+ char const* timestampString() {
+   struct timeval tvNow;
+-  gettimeofday(&tvNow, NULL);
++  mygettimeofday(&tvNow, NULL);
+ 
+ #if !defined(_WIN32_WCE)
+   static char timeString[9]; // holds hh:mm:ss plus trailing '\0'
+@@ -756,14 +756,14 @@ char const* timestampString() {
+ #if (defined(__WIN32__) || defined(_WIN32)) && !defined(__MINGW32__)
+ // For Windoze, we need to implement our own gettimeofday()
+ 
+-// used to make sure that static variables in gettimeofday() aren't initialized simultaneously by multiple threads
++// used to make sure that static variables in mygettimeofday() aren't initialized simultaneously by multiple threads
+ static LONG initializeLock_gettimeofday = 0;  
+ 
+ #if !defined(_WIN32_WCE)
+ #include <sys/timeb.h>
+ #endif
+ 
+-int gettimeofday(struct timeval* tp, int* /*tz*/) {
++int mygettimeofday(struct timeval* tp, int* /*tz*/) {
+   static LARGE_INTEGER tickFrequency, epochOffset;
+ 
+   static Boolean isInitialized = False;
+@@ -836,4 +836,17 @@ int gettimeofday(struct timeval* tp, int* /*tz*/) {
+ 
+   return 0;
+ }
++#else
++int mygettimeofday(struct timeval* tp, int* /*tz*/) {
++#ifdef MONOTONIC_CLOCK
++	struct timespec ts;
++	clock_gettime( CLOCK_MONOTONIC, &ts );
++	tp->tv_sec = ts.tv_sec;
++	tp->tv_usec = ts.tv_nsec/1000;
++	return 0;
++#else
++	return gettimeofday(tp, NULL);
+ #endif
++}
++#endif
++
+diff --git a/groupsock/include/GroupsockHelper.hh b/groupsock/include/GroupsockHelper.hh
+index f80a474..63e074f 100644
+--- a/groupsock/include/GroupsockHelper.hh
++++ b/groupsock/include/GroupsockHelper.hh
+@@ -130,12 +130,7 @@ _groupsockPriv* groupsockPriv(UsageEnvironment& env); // allocates it if necessa
+ void reclaimGroupsockPriv(UsageEnvironment& env);
+ 
+ 
+-#if (defined(__WIN32__) || defined(_WIN32)) && !defined(__MINGW32__)
+-// For Windoze, we need to implement our own gettimeofday()
+-extern int gettimeofday(struct timeval*, int*);
+-#else
+-#include <sys/time.h>
+-#endif
++extern int mygettimeofday(struct timeval*, int*);
+ 
+ // The following are implemented in inet.c:
+ extern "C" netAddressBits our_inet_addr(char const*);
+diff --git a/liveMedia/AC3AudioStreamFramer.cpp b/liveMedia/AC3AudioStreamFramer.cpp
+index 5800040..1f46e47 100644
+--- a/liveMedia/AC3AudioStreamFramer.cpp
++++ b/liveMedia/AC3AudioStreamFramer.cpp
+@@ -87,7 +87,7 @@ AC3AudioStreamFramer::AC3AudioStreamFramer(UsageEnvironment& env,
+ 					   unsigned char streamCode)
+   : FramedFilter(env, inputSource), fOurStreamCode(streamCode) {
+   // Use the current wallclock time as the initial 'presentation time':
+-  gettimeofday(&fNextFramePresentationTime, NULL);
++  mygettimeofday(&fNextFramePresentationTime, NULL);
+ 
+   fParser = new AC3AudioStreamParser(this, inputSource);
+ }
+diff --git a/liveMedia/ADTSAudioFileSource.cpp b/liveMedia/ADTSAudioFileSource.cpp
+index 1470d67..ebfc218 100644
+--- a/liveMedia/ADTSAudioFileSource.cpp
++++ b/liveMedia/ADTSAudioFileSource.cpp
+@@ -155,7 +155,7 @@ void ADTSAudioFileSource::doGetNextFrame() {
+   // Set the 'presentation time':
+   if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
+     // This is the first frame, so use the current time:
+-    gettimeofday(&fPresentationTime, NULL);
++    mygettimeofday(&fPresentationTime, NULL);
+   } else {
+     // Increment by the play time of the previous frame:
+     unsigned uSeconds = fPresentationTime.tv_usec + fuSecsPerFrame;
+diff --git a/liveMedia/AMRAudioFileSource.cpp b/liveMedia/AMRAudioFileSource.cpp
+index 23fff99..2f15cf9 100644
+--- a/liveMedia/AMRAudioFileSource.cpp
++++ b/liveMedia/AMRAudioFileSource.cpp
+@@ -158,7 +158,7 @@ void AMRAudioFileSource::doGetNextFrame() {
+   // Set the 'presentation time':
+   if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
+     // This is the first frame, so use the current time:
+-    gettimeofday(&fPresentationTime, NULL);
++    mygettimeofday(&fPresentationTime, NULL);
+   } else {
+     // Increment by the play time of the previous frame (20 ms)
+     unsigned uSeconds	= fPresentationTime.tv_usec + 20000;
+diff --git a/liveMedia/AVIFileSink.cpp b/liveMedia/AVIFileSink.cpp
+index 6ea3c22..03b9b13 100644
+--- a/liveMedia/AVIFileSink.cpp
++++ b/liveMedia/AVIFileSink.cpp
+@@ -306,7 +306,7 @@ void AVIFileSink::onRTCPBye(void* clientData) {
+   AVISubsessionIOState* ioState = (AVISubsessionIOState*)clientData;
+ 
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   unsigned secsDiff
+     = timeNow.tv_sec - ioState->fOurSink.fStartTime.tv_sec;
+ 
+diff --git a/liveMedia/BasicUDPSink.cpp b/liveMedia/BasicUDPSink.cpp
+index 25973d0..56f403c 100644
+--- a/liveMedia/BasicUDPSink.cpp
++++ b/liveMedia/BasicUDPSink.cpp
+@@ -39,7 +39,7 @@ BasicUDPSink::~BasicUDPSink() {
+ 
+ Boolean BasicUDPSink::continuePlaying() {
+   // Record the fact that we're starting to play now:
+-  gettimeofday(&fNextSendTime, NULL);
++  mygettimeofday(&fNextSendTime, NULL);
+ 
+   // Arrange to get and send the first payload.
+   // (This will also schedule any future sends.)
+@@ -82,7 +82,7 @@ void BasicUDPSink::afterGettingFrame1(unsigned frameSize, unsigned numTruncatedB
+   fNextSendTime.tv_usec %= 1000000;
+ 
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   int secsDiff = fNextSendTime.tv_sec - timeNow.tv_sec;
+   int64_t uSecondsToGo = secsDiff*1000000 + (fNextSendTime.tv_usec - timeNow.tv_usec);
+   if (uSecondsToGo < 0 || secsDiff < 0) { // sanity check: Make sure that the time-to-delay is non-negative:
+diff --git a/liveMedia/ByteStreamFileSource.cpp b/liveMedia/ByteStreamFileSource.cpp
+index c3d4efd..672bee0 100644
+--- a/liveMedia/ByteStreamFileSource.cpp
++++ b/liveMedia/ByteStreamFileSource.cpp
+@@ -154,7 +154,7 @@ void ByteStreamFileSource::doReadFromFile() {
+   if (fPlayTimePerFrame > 0 && fPreferredFrameSize > 0) {
+     if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
+       // This is the first frame, so use the current time:
+-      gettimeofday(&fPresentationTime, NULL);
++      mygettimeofday(&fPresentationTime, NULL);
+     } else {
+       // Increment by the play time of the previous data:
+       unsigned uSeconds	= fPresentationTime.tv_usec + fLastPlayTime;
+@@ -168,7 +168,7 @@ void ByteStreamFileSource::doReadFromFile() {
+   } else {
+     // We don't know a specific play time duration for this data,
+     // so just record the current time as being the 'presentation time':
+-    gettimeofday(&fPresentationTime, NULL);
++    mygettimeofday(&fPresentationTime, NULL);
+   }
+ 
+   // Inform the reader that he has data:
+diff --git a/liveMedia/ByteStreamMemoryBufferSource.cpp b/liveMedia/ByteStreamMemoryBufferSource.cpp
+index 3b8db17..686bf1f 100644
+--- a/liveMedia/ByteStreamMemoryBufferSource.cpp
++++ b/liveMedia/ByteStreamMemoryBufferSource.cpp
+@@ -96,7 +96,7 @@ void ByteStreamMemoryBufferSource::doGetNextFrame() {
+   if (fPlayTimePerFrame > 0 && fPreferredFrameSize > 0) {
+     if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
+       // This is the first frame, so use the current time:
+-      gettimeofday(&fPresentationTime, NULL);
++      mygettimeofday(&fPresentationTime, NULL);
+     } else {
+       // Increment by the play time of the previous data:
+       unsigned uSeconds	= fPresentationTime.tv_usec + fLastPlayTime;
+@@ -110,7 +110,7 @@ void ByteStreamMemoryBufferSource::doGetNextFrame() {
+   } else {
+     // We don't know a specific play time duration for this data,
+     // so just record the current time as being the 'presentation time':
+-    gettimeofday(&fPresentationTime, NULL);
++    mygettimeofday(&fPresentationTime, NULL);
+   }
+ 
+   // Inform the downstream object that it has data:
+diff --git a/liveMedia/DVVideoStreamFramer.cpp b/liveMedia/DVVideoStreamFramer.cpp
+index 53a0b74..cd7799c 100644
+--- a/liveMedia/DVVideoStreamFramer.cpp
++++ b/liveMedia/DVVideoStreamFramer.cpp
+@@ -31,7 +31,7 @@ DVVideoStreamFramer::DVVideoStreamFramer(UsageEnvironment& env, FramedSource* in
+     fOurProfile(NULL), fInitialBlocksPresent(False), fSourceIsSeekable(sourceIsSeekable) {
+   fTo = NULL; // hack used when reading "fSavedInitialBlocks"
+   // Use the current wallclock time as the initial 'presentation time':
+-  gettimeofday(&fNextFramePresentationTime, NULL);
++  mygettimeofday(&fNextFramePresentationTime, NULL);
+ }
+ 
+ DVVideoStreamFramer::~DVVideoStreamFramer() {
+diff --git a/liveMedia/DeviceSource.cpp b/liveMedia/DeviceSource.cpp
+index 87f6a8a..8729865 100644
+--- a/liveMedia/DeviceSource.cpp
++++ b/liveMedia/DeviceSource.cpp
+@@ -22,7 +22,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ // Implementation
+ 
+ #include "DeviceSource.hh"
+-#include <GroupsockHelper.hh> // for "gettimeofday()"
++#include <GroupsockHelper.hh> // for "mygettimeofday()"
+ 
+ DeviceSource*
+ DeviceSource::createNew(UsageEnvironment& env,
+@@ -132,7 +132,7 @@ void DeviceSource::deliverFrame() {
+   } else {
+     fFrameSize = newFrameSize;
+   }
+-  gettimeofday(&fPresentationTime, NULL); // If you have a more accurate time - e.g., from an encoder - then use that instead.
++  mygettimeofday(&fPresentationTime, NULL); // If you have a more accurate time - e.g., from an encoder - then use that instead.
+   // If the device is *not* a 'live source' (e.g., it comes instead from a file or buffer), then set "fDurationInMicroseconds" here.
+   memmove(fTo, newFrameDataStart, fFrameSize);
+ 
+diff --git a/liveMedia/DigestAuthentication.cpp b/liveMedia/DigestAuthentication.cpp
+index a92eb26..f04124c 100644
+--- a/liveMedia/DigestAuthentication.cpp
++++ b/liveMedia/DigestAuthentication.cpp
+@@ -21,7 +21,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ #include "DigestAuthentication.hh"
+ #include "ourMD5.hh"
+ #include <strDup.hh>
+-#include <GroupsockHelper.hh> // for gettimeofday()
++#include <GroupsockHelper.hh> // for mygettimeofday()
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -83,7 +83,7 @@ void Authenticator::setRealmAndRandomNonce(char const* realm) {
+     struct timeval timestamp;
+     unsigned counter;
+   } seedData;
+-  gettimeofday(&seedData.timestamp, NULL);
++  mygettimeofday(&seedData.timestamp, NULL);
+   static unsigned counter = 0;
+   seedData.counter = ++counter;
+ 
+diff --git a/liveMedia/H263plusVideoStreamFramer.cpp b/liveMedia/H263plusVideoStreamFramer.cpp
+index 1b23375..aaf4a3b 100644
+--- a/liveMedia/H263plusVideoStreamFramer.cpp
++++ b/liveMedia/H263plusVideoStreamFramer.cpp
+@@ -50,7 +50,7 @@ H263plusVideoStreamFramer::H263plusVideoStreamFramer(
+                                 fPictureEndMarker(False)
+ {
+    // Use the current wallclock time as the base 'presentation time':
+-   gettimeofday(&fPresentationTimeBase, NULL);
++   mygettimeofday(&fPresentationTimeBase, NULL);
+    fParser = createParser ? new H263plusVideoStreamParser(this, inputSource) : NULL;
+ }
+ 
+diff --git a/liveMedia/MP3StreamState.cpp b/liveMedia/MP3StreamState.cpp
+index c5aac48..76c62f7 100644
+--- a/liveMedia/MP3StreamState.cpp
++++ b/liveMedia/MP3StreamState.cpp
+@@ -61,7 +61,7 @@ void MP3StreamState::assignStream(FILE* fid, unsigned fileSize) {
+   fIsVBR = fHasXingTOC = False; // ditto
+ 
+   // Set the first frame's 'presentation time' to the current wall time:
+-  gettimeofday(&fNextFramePresentationTime, NULL);
++  mygettimeofday(&fNextFramePresentationTime, NULL);
+ }
+ 
+ struct timeval MP3StreamState::currentFramePlayTime() const {
+diff --git a/liveMedia/MPEG1or2AudioStreamFramer.cpp b/liveMedia/MPEG1or2AudioStreamFramer.cpp
+index e7539f9..316f709 100644
+--- a/liveMedia/MPEG1or2AudioStreamFramer.cpp
++++ b/liveMedia/MPEG1or2AudioStreamFramer.cpp
+@@ -80,7 +80,7 @@ void MPEG1or2AudioStreamFramer::flushInput() {
+ void MPEG1or2AudioStreamFramer::reset() {
+   // Use the current wallclock time as the initial 'presentation time':
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   resetPresentationTime(timeNow);
+ }
+ 
+diff --git a/liveMedia/MPEG2TransportStreamFramer.cpp b/liveMedia/MPEG2TransportStreamFramer.cpp
+index 18c7fb1..6e40c11 100644
+--- a/liveMedia/MPEG2TransportStreamFramer.cpp
++++ b/liveMedia/MPEG2TransportStreamFramer.cpp
+@@ -21,7 +21,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ // Implementation
+ 
+ #include "MPEG2TransportStreamFramer.hh"
+-#include <GroupsockHelper.hh> // for "gettimeofday()"
++#include <GroupsockHelper.hh> // for "mygettimeofday()"
+ 
+ #define TRANSPORT_PACKET_SIZE 188
+ 
+@@ -175,7 +175,7 @@ void MPEG2TransportStreamFramer::afterGettingFrame1(unsigned frameSize,
+   // Scan through the TS packets that we read, and update our estimate of
+   // the duration of each packet:
+   struct timeval tvNow;
+-  gettimeofday(&tvNow, NULL);
++  mygettimeofday(&tvNow, NULL);
+   double timeNow = tvNow.tv_sec + tvNow.tv_usec/1000000.0;
+   for (unsigned i = 0; i < numTSPackets; ++i) {
+     if (!updateTSPacketDurationEstimate(&fTo[i*TRANSPORT_PACKET_SIZE], timeNow)) {
+diff --git a/liveMedia/MPEGVideoStreamFramer.cpp b/liveMedia/MPEGVideoStreamFramer.cpp
+index 46c15d3..69b1ac7 100644
+--- a/liveMedia/MPEGVideoStreamFramer.cpp
++++ b/liveMedia/MPEGVideoStreamFramer.cpp
+@@ -64,7 +64,7 @@ void MPEGVideoStreamFramer::reset() {
+   fHaveSeenFirstTimeCode = False;
+ 
+   // Use the current wallclock time as the base 'presentation time':
+-  gettimeofday(&fPresentationTimeBase, NULL);
++  mygettimeofday(&fPresentationTimeBase, NULL);
+ }
+ 
+ #ifdef DEBUG
+diff --git a/liveMedia/MatroskaFileParser.cpp b/liveMedia/MatroskaFileParser.cpp
+index 18d6f66..08226c0 100644
+--- a/liveMedia/MatroskaFileParser.cpp
++++ b/liveMedia/MatroskaFileParser.cpp
+@@ -21,7 +21,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ #include "MatroskaFileParser.hh"
+ #include "MatroskaDemuxedTrack.hh"
+ #include <ByteStreamFileSource.hh>
+-#include <GroupsockHelper.hh> // for "gettimeofday()
++#include <GroupsockHelper.hh> // for "mygettimeofday()
+ 
+ MatroskaFileParser::MatroskaFileParser(MatroskaFile& ourFile, FramedSource* inputSource,
+ 				       FramedSource::onCloseFunc* onEndFunc, void* onEndClientData,
+@@ -1061,7 +1061,7 @@ Boolean MatroskaFileParser::deliverFrameWithinBlock() {
+       // This is the first time we've computed a presentation time.  Compute an offset to make the presentation times aligned
+       // with 'wall clock' time:
+       struct timeval timeNow;
+-      gettimeofday(&timeNow, NULL);
++      mygettimeofday(&timeNow, NULL);
+       double ptNow = timeNow.tv_sec + timeNow.tv_usec/1000000.0;
+       fPresentationTimeOffset = ptNow - pt;
+     }
+diff --git a/liveMedia/MultiFramedRTPSink.cpp b/liveMedia/MultiFramedRTPSink.cpp
+index 278d258..b652f34 100644
+--- a/liveMedia/MultiFramedRTPSink.cpp
++++ b/liveMedia/MultiFramedRTPSink.cpp
+@@ -241,7 +241,7 @@ void MultiFramedRTPSink
+ 		     unsigned durationInMicroseconds) {
+   if (fIsFirstPacket) {
+     // Record the fact that we're starting to play now:
+-    gettimeofday(&fNextSendTime, NULL);
++    mygettimeofday(&fNextSendTime, NULL);
+   }
+ 
+   fMostRecentPresentationTime = presentationTime;
+@@ -404,7 +404,7 @@ void MultiFramedRTPSink::sendPacketIfNecessary() {
+     // is due to start playing, then make sure that we wait this long before
+     // sending the next packet.
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+     int secsDiff = fNextSendTime.tv_sec - timeNow.tv_sec;
+     int64_t uSecondsToGo = secsDiff*1000000 + (fNextSendTime.tv_usec - timeNow.tv_usec);
+     if (uSecondsToGo < 0 || secsDiff < 0) { // sanity check: Make sure that the time-to-delay is non-negative:
+diff --git a/liveMedia/MultiFramedRTPSource.cpp b/liveMedia/MultiFramedRTPSource.cpp
+index fa16e69..498fcab 100644
+--- a/liveMedia/MultiFramedRTPSource.cpp
++++ b/liveMedia/MultiFramedRTPSource.cpp
+@@ -325,7 +325,7 @@ void MultiFramedRTPSource::networkReadHandler1() {
+ 
+     // Fill in the rest of the packet descriptor, and store it:
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+     bPacket->assignMiscParams(rtpSeqNo, rtpTimestamp, presentationTime,
+ 			      hasBeenSyncedUsingRTCP, rtpMarkerBit,
+ 			      timeNow);
+@@ -613,7 +613,7 @@ BufferedPacket* ReorderingPacketBuffer
+     timeThresholdHasBeenExceeded = True; // optimization
+   } else {
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+     unsigned uSecondsSinceReceived
+       = (timeNow.tv_sec - fHeadPacket->timeReceived().tv_sec)*1000000
+       + (timeNow.tv_usec - fHeadPacket->timeReceived().tv_usec);
+diff --git a/liveMedia/OggFileParser.cpp b/liveMedia/OggFileParser.cpp
+index 473bc17..1218560 100644
+--- a/liveMedia/OggFileParser.cpp
++++ b/liveMedia/OggFileParser.cpp
+@@ -20,7 +20,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ 
+ #include "OggFileParser.hh"
+ #include "OggDemuxedTrack.hh"
+-#include <GroupsockHelper.hh> // for "gettimeofday()
++#include <GroupsockHelper.hh> // for "mygettimeofday()
+ 
+ PacketSizeTable::PacketSizeTable(unsigned number_page_segments)
+   : numCompletedPackets(0), totSizes(0), nextPacketNumToDeliver(0),
+@@ -925,7 +925,7 @@ Boolean OggFileParser::deliverPacketWithinPage() {
+ 
+   if (demuxedTrack->nextPresentationTime().tv_sec == 0 && demuxedTrack->nextPresentationTime().tv_usec == 0) {
+     // This is the first delivery.  Initialize "demuxedTrack->nextPresentationTime()":
+-    gettimeofday(&demuxedTrack->nextPresentationTime(), NULL);
++    mygettimeofday(&demuxedTrack->nextPresentationTime(), NULL);
+   }
+   demuxedTrack->presentationTime() = demuxedTrack->nextPresentationTime();
+   demuxedTrack->durationInMicroseconds() = durationInMicroseconds;
+diff --git a/liveMedia/PassiveServerMediaSubsession.cpp b/liveMedia/PassiveServerMediaSubsession.cpp
+index 85c6231..1d9dd75 100644
+--- a/liveMedia/PassiveServerMediaSubsession.cpp
++++ b/liveMedia/PassiveServerMediaSubsession.cpp
+@@ -202,7 +202,7 @@ float PassiveServerMediaSubsession::getCurrentNPT(void* streamToken) {
+   struct timeval const& creationTime  = fRTPSink.creationTime(); // alias
+ 
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+ 
+   return (float)(timeNow.tv_sec - creationTime.tv_sec + (timeNow.tv_usec - creationTime.tv_usec)/1000000.0);
+ }
+diff --git a/liveMedia/ProxyServerMediaSession.cpp b/liveMedia/ProxyServerMediaSession.cpp
+index 23795f3..2f4c64b 100644
+--- a/liveMedia/ProxyServerMediaSession.cpp
++++ b/liveMedia/ProxyServerMediaSession.cpp
+@@ -827,7 +827,7 @@ void PresentationTimeSessionNormalizer
+       fMasterSSNormalizer = ssNormalizer;
+ 
+       struct timeval timeNow;
+-      gettimeofday(&timeNow, NULL);
++      mygettimeofday(&timeNow, NULL);
+ 
+       // Compute: fPTAdjustment = timeNow - fromPT
+       fPTAdjustment.tv_sec = timeNow.tv_sec - fromPT.tv_sec;
+diff --git a/liveMedia/QuickTimeFileSink.cpp b/liveMedia/QuickTimeFileSink.cpp
+index 1b70387..3c2eaea 100644
+--- a/liveMedia/QuickTimeFileSink.cpp
++++ b/liveMedia/QuickTimeFileSink.cpp
+@@ -299,7 +299,7 @@ QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
+   // Use the current time as the file's creation and modification
+   // time.  Use Apple's time format: seconds since January 1, 1904
+ 
+-  gettimeofday(&fStartTime, NULL);
++  mygettimeofday(&fStartTime, NULL);
+   fAppleCreationTime = fStartTime.tv_sec - 0x83dac000;
+ 
+   // Begin by writing a "mdat" atom at the start of the file.
+@@ -456,7 +456,7 @@ void QuickTimeFileSink::onRTCPBye(void* clientData) {
+   SubsessionIOState* ioState = (SubsessionIOState*)clientData;
+ 
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   unsigned secsDiff
+     = timeNow.tv_sec - ioState->fOurSink.fStartTime.tv_sec;
+ 
+diff --git a/liveMedia/RTCP.cpp b/liveMedia/RTCP.cpp
+index faa8adc..ec909ac 100644
+--- a/liveMedia/RTCP.cpp
++++ b/liveMedia/RTCP.cpp
+@@ -113,7 +113,7 @@ void RTCPMemberDatabase::reapOldMembers(unsigned threshold) {
+ 
+ static double dTimeNow() {
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+     return (double) (timeNow.tv_sec + timeNow.tv_usec/1000000.0);
+ }
+ 
+@@ -965,7 +965,7 @@ void RTCPInstance::addSR() {
+ 
+   // Insert the NTP and RTP timestamps for the 'wallclock time':
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   fOutBuf->enqueueWord(timeNow.tv_sec + 0x83AA7E80);
+       // NTP timestamp most-significant word (1970 epoch -> 1900 epoch)
+   double fractionalPart = (timeNow.tv_usec/15625.0)*0x04000000; // 2^32/10^6
+@@ -1072,7 +1072,7 @@ RTCPInstance::enqueueReportBlock(RTPReceptionStats* stats) {
+   // Figure out how long has elapsed since the last SR rcvd from this src:
+   struct timeval const& LSRtime = stats->lastReceivedSR_time(); // "last SR"
+   struct timeval timeNow, timeSinceLSR;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   if (timeNow.tv_usec < LSRtime.tv_usec) {
+     timeNow.tv_usec += 1000000;
+     timeNow.tv_sec -= 1;
+diff --git a/liveMedia/RTPSink.cpp b/liveMedia/RTPSink.cpp
+index 3798caf..2db6c6c 100644
+--- a/liveMedia/RTPSink.cpp
++++ b/liveMedia/RTPSink.cpp
+@@ -55,7 +55,7 @@ RTPSink::RTPSink(UsageEnvironment& env,
+     fNumChannels(numChannels), fEstimatedBitrate(0) {
+   fRTPPayloadFormatName
+     = strDup(rtpPayloadFormatName == NULL ? "???" : rtpPayloadFormatName);
+-  gettimeofday(&fCreationTime, NULL);
++  mygettimeofday(&fCreationTime, NULL);
+   fTotalOctetCountStartTime = fCreationTime;
+   resetPresentationTimes();
+ 
+@@ -99,7 +99,7 @@ u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) {
+ 
+ u_int32_t RTPSink::presetNextTimestamp() {
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+ 
+   u_int32_t tsNow = convertToRTPTimestamp(timeNow);
+   if (!groupsockBeingUsed().hasMultipleDestinations()) {
+@@ -113,7 +113,7 @@ u_int32_t RTPSink::presetNextTimestamp() {
+ 
+ void RTPSink::getTotalBitrate(unsigned& outNumBytes, double& outElapsedTime) {
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+ 
+   outNumBytes = fTotalOctetCount;
+   outElapsedTime = (double)(timeNow.tv_sec-fTotalOctetCountStartTime.tv_sec)
+@@ -250,7 +250,7 @@ RTPTransmissionStats::RTPTransmissionStats(RTPSink& rtpSink, u_int32_t SSRC)
+     fLastSRTime(0), fDiffSR_RRTime(0), fAtLeastTwoRRsHaveBeenReceived(False), fFirstPacket(True),
+     fTotalOctetCount_hi(0), fTotalOctetCount_lo(0),
+     fTotalPacketCount_hi(0), fTotalPacketCount_lo(0) {
+-  gettimeofday(&fTimeCreated, NULL);
++  mygettimeofday(&fTimeCreated, NULL);
+ 
+   fLastOctetCount = rtpSink.octetCount();
+   fLastPacketCount = rtpSink.packetCount();
+@@ -271,7 +271,7 @@ void RTPTransmissionStats
+     fOldLastPacketNumReceived = fLastPacketNumReceived;
+     fOldTotNumPacketsLost = fTotNumPacketsLost;
+   }
+-  gettimeofday(&fTimeReceived, NULL);
++  mygettimeofday(&fTimeReceived, NULL);
+ 
+   fLastFromAddress = lastFromAddress;
+   fPacketLossRatio = lossStats>>24;
+diff --git a/liveMedia/RTPSource.cpp b/liveMedia/RTPSource.cpp
+index 1946d99..413977f 100644
+--- a/liveMedia/RTPSource.cpp
++++ b/liveMedia/RTPSource.cpp
+@@ -278,7 +278,7 @@ void RTPReceptionStats
+ 
+   // Record the inter-packet delay
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   if (fLastPacketReceptionTime.tv_sec != 0
+       || fLastPacketReceptionTime.tv_usec != 0) {
+     unsigned gap
+@@ -372,7 +372,7 @@ void RTPReceptionStats::noteIncomingSR(u_int32_t ntpTimestampMSW,
+   fLastReceivedSR_NTPmsw = ntpTimestampMSW;
+   fLastReceivedSR_NTPlsw = ntpTimestampLSW;
+ 
+-  gettimeofday(&fLastReceivedSR_time, NULL);
++  mygettimeofday(&fLastReceivedSR_time, NULL);
+ 
+   // Use this SR to update time synchronization information:
+   fSyncTimestamp = rtpTimestamp;
+diff --git a/liveMedia/RTSPClient.cpp b/liveMedia/RTSPClient.cpp
+index bdcb6d9..87327f3 100644
+--- a/liveMedia/RTSPClient.cpp
++++ b/liveMedia/RTSPClient.cpp
+@@ -740,7 +740,7 @@ Boolean RTSPClient::setRequestFields(RequestRecord* request,
+ 	struct timeval timestamp;
+ 	unsigned counter;
+       } seedData;
+-      gettimeofday(&seedData.timestamp, NULL);
++      mygettimeofday(&seedData.timestamp, NULL);
+       seedData.counter = ++fSessionCookieCounter;
+       our_MD5Data((unsigned char*)(&seedData), sizeof seedData, fSessionCookie);
+       // DSS seems to require that the 'session cookie' string be 22 bytes long:
+diff --git a/liveMedia/ServerMediaSession.cpp b/liveMedia/ServerMediaSession.cpp
+index 310120d..e1cfc79 100644
+--- a/liveMedia/ServerMediaSession.cpp
++++ b/liveMedia/ServerMediaSession.cpp
+@@ -79,7 +79,7 @@ ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
+ 
+   fMiscSDPLines = strDup(miscSDPLines == NULL ? "" : miscSDPLines);
+ 
+-  gettimeofday(&fCreationTime, NULL);
++  mygettimeofday(&fCreationTime, NULL);
+ }
+ 
+ ServerMediaSession::~ServerMediaSession() {
+diff --git a/liveMedia/T140TextRTPSink.cpp b/liveMedia/T140TextRTPSink.cpp
+index a88daec..0f2b4e7 100644
+--- a/liveMedia/T140TextRTPSink.cpp
++++ b/liveMedia/T140TextRTPSink.cpp
+@@ -19,7 +19,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ // Implementation
+ 
+ #include "T140TextRTPSink.hh"
+-#include <GroupsockHelper.hh> // for "gettimeofday()"
++#include <GroupsockHelper.hh> // for "mygettimeofday()"
+ 
+ ////////// T140TextRTPSink implementation //////////
+ 
+@@ -168,7 +168,7 @@ void T140IdleFilter::deliverFromBuffer() {
+ 
+ void T140IdleFilter::deliverEmptyFrame() {
+   fFrameSize = fNumTruncatedBytes = 0;
+-  gettimeofday(&fPresentationTime, NULL);
++  mygettimeofday(&fPresentationTime, NULL);
+   FramedSource::afterGetting(this); // complete delivery
+ }
+ 
+diff --git a/liveMedia/WAVAudioFileSource.cpp b/liveMedia/WAVAudioFileSource.cpp
+index 5b23db6..9c8cc98 100644
+--- a/liveMedia/WAVAudioFileSource.cpp
++++ b/liveMedia/WAVAudioFileSource.cpp
+@@ -320,7 +320,7 @@ void WAVAudioFileSource::doReadFromFile() {
+   // Set the 'presentation time' and 'duration' of this frame:
+   if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
+     // This is the first frame, so use the current time:
+-    gettimeofday(&fPresentationTime, NULL);
++    mygettimeofday(&fPresentationTime, NULL);
+   } else {
+     // Increment by the play time of the previous data:
+     unsigned uSeconds = fPresentationTime.tv_usec + fLastPlayTime;
+diff --git a/testProgs/playCommon.cpp b/testProgs/playCommon.cpp
+index deb793a..a391d8a 100644
+--- a/testProgs/playCommon.cpp
++++ b/testProgs/playCommon.cpp
+@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
+ 
+   progName = argv[0];
+ 
+-  gettimeofday(&startTime, NULL);
++  mygettimeofday(&startTime, NULL);
+ 
+ #ifdef USE_SIGNALS
+   // Allow ourselves to be shut down gracefully by a SIGHUP or a SIGUSR1:
+@@ -940,7 +940,7 @@ void createOutputFiles(char const* periodicFilenameSuffix) {
+ 	  unsigned char* configData
+ 	    = parseGeneralConfigStr(subsession->fmtp_config(), configLen);
+ 	  struct timeval timeNow;
+-	  gettimeofday(&timeNow, NULL);
++	  mygettimeofday(&timeNow, NULL);
+ 	  fileSink->addData(configData, configLen, timeNow);
+ 	  delete[] configData;
+ 	}
+@@ -1118,7 +1118,7 @@ void subsessionAfterPlaying(void* clientData) {
+ 
+ void subsessionByeHandler(void* clientData) {
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   unsigned secsDiff = timeNow.tv_sec - startTime.tv_sec;
+ 
+   MediaSubsession* subsession = (MediaSubsession*)clientData;
+@@ -1211,7 +1211,7 @@ static unsigned nextQOSMeasurementUSecs;
+ static void scheduleNextQOSMeasurement() {
+   nextQOSMeasurementUSecs += qosMeasurementIntervalMS*1000;
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+   unsigned timeNowUSecs = timeNow.tv_sec*1000000 + timeNow.tv_usec;
+   int usecsToDelay = nextQOSMeasurementUSecs - timeNowUSecs;
+ 
+@@ -1221,7 +1221,7 @@ static void scheduleNextQOSMeasurement() {
+ 
+ static void periodicQOSMeasurement(void* /*clientData*/) {
+   struct timeval timeNow;
+-  gettimeofday(&timeNow, NULL);
++  mygettimeofday(&timeNow, NULL);
+ 
+   for (qosMeasurementRecord* qosRecord = qosRecordHead;
+        qosRecord != NULL; qosRecord = qosRecord->fNext) {
+@@ -1274,7 +1274,7 @@ void qosMeasurementRecord
+ void beginQOSMeasurement() {
+   // Set up a measurement record for each active subsession:
+   struct timeval startTime;
+-  gettimeofday(&startTime, NULL);
++  mygettimeofday(&startTime, NULL);
+   nextQOSMeasurementUSecs = startTime.tv_sec*1000000 + startTime.tv_usec;
+   qosMeasurementRecord* qosRecordTail = NULL;
+   MediaSubsessionIterator iter(*session);
+@@ -1472,7 +1472,7 @@ void checkForPacketArrival(void* /*clientData*/) {
+   }
+   if (notifyTheUser) {
+     struct timeval timeNow;
+-    gettimeofday(&timeNow, NULL);
++    mygettimeofday(&timeNow, NULL);
+ 	char timestampStr[100];
+ 	sprintf(timestampStr, "%ld%03ld", timeNow.tv_sec, (long)(timeNow.tv_usec/1000));
+     *env << (syncStreams ? "Synchronized d" : "D")
+-- 
+1.9.1
+

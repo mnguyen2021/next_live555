@@ -1,0 +1,94 @@
+From 8765a9017bdf8f214a2b3a71041955fd42458c53 Mon Sep 17 00:00:00 2001
+From: charles <charles@au-zone.com>
+Date: Wed, 30 Nov 2016 17:53:33 -0700
+Subject: [PATCH] Add liveness check at client connection level
+
+---
+ liveMedia/GenericMediaServer.cpp        | 21 ++++++++++++++++++++-
+ liveMedia/RTSPServer.cpp                |  3 +++
+ liveMedia/include/GenericMediaServer.hh |  3 +++
+ 3 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/liveMedia/GenericMediaServer.cpp b/liveMedia/GenericMediaServer.cpp
+index 1f33203..538cd58 100644
+--- a/liveMedia/GenericMediaServer.cpp
++++ b/liveMedia/GenericMediaServer.cpp
+@@ -209,7 +209,10 @@ void GenericMediaServer::incomingConnectionHandlerOnSocket(int serverSocket) {
+ 
+ GenericMediaServer::ClientConnection
+ ::ClientConnection(GenericMediaServer& ourServer, int clientSocket, struct sockaddr_in clientAddr)
+-  : fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr) {
++  : fOurServer(ourServer), fOurSocket(clientSocket), fClientAddr(clientAddr),
++    fLivenessCheckTask(NULL) {
++  noteLiveness();
++
+   // Add ourself to our 'client connections' table:
+   fOurServer.fClientConnections->Add((char const*)this, this);
+   
+@@ -220,12 +223,28 @@ GenericMediaServer::ClientConnection
+ }
+ 
+ GenericMediaServer::ClientConnection::~ClientConnection() {
++  // Turn off any liveness checking:
++  envir().taskScheduler().unscheduleDelayedTask(fLivenessCheckTask);
++
+   // Remove ourself from the server's 'client connections' hash table before we go:
+   fOurServer.fClientConnections->Remove((char const*)this);
+   
+   closeSockets();
+ }
+ 
++void GenericMediaServer::ClientConnection::noteLiveness() {
++  if (fOurServer.fReclamationSeconds > 0) {
++    envir().taskScheduler().rescheduleDelayedTask(fLivenessCheckTask,
++                                                  fOurServer.fReclamationSeconds*1000000*2,
++                                                  (TaskFunc*)ConnlivenessTimeoutTask, this);
++  }
++}
++
++void GenericMediaServer::ClientConnection::ConnlivenessTimeoutTask(ClientConnection* clientConnection) {
++  // If this gets called, the client connection is assumed to have timed out, so delete it:
++  delete clientConnection;
++}
++
+ void GenericMediaServer::ClientConnection::closeSockets() {
+   // Turn off background handling on our socket:
+   envir().taskScheduler().disableBackgroundHandling(fOurSocket);
+diff --git a/liveMedia/RTSPServer.cpp b/liveMedia/RTSPServer.cpp
+index 309b143..e87e27a 100644
+--- a/liveMedia/RTSPServer.cpp
++++ b/liveMedia/RTSPServer.cpp
+@@ -724,6 +724,9 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
+ 	  = (RTSPServer::RTSPClientSession*)(fOurRTSPServer.lookupClientSession(sessionIdStr));
+ 	if (clientSession != NULL) clientSession->noteLiveness();
+       }
++
++      // Also do 'liveness' note at the connection level
++      noteLiveness();
+     
+       // We now have a complete RTSP request.
+       // Handle the specified command (beginning with commands that are session-independent):
+diff --git a/liveMedia/include/GenericMediaServer.hh b/liveMedia/include/GenericMediaServer.hh
+index 393e74a..aba1d78 100644
+--- a/liveMedia/include/GenericMediaServer.hh
++++ b/liveMedia/include/GenericMediaServer.hh
+@@ -88,6 +88,8 @@ public: // should be protected, but some old compilers complain otherwise
+     virtual ~ClientConnection();
+ 
+     UsageEnvironment& envir() { return fOurServer.envir(); }
++    void noteLiveness();
++    static void ConnlivenessTimeoutTask(ClientConnection* clientConnection);
+     void closeSockets();
+ 
+     static void incomingRequestHandler(void*, int /*mask*/);
+@@ -105,6 +107,7 @@ public: // should be protected, but some old compilers complain otherwise
+     unsigned char fRequestBuffer[REQUEST_BUFFER_SIZE];
+     unsigned char fResponseBuffer[RESPONSE_BUFFER_SIZE];
+     unsigned fRequestBytesAlreadySeen, fRequestBufferBytesLeft;
++    TaskToken fLivenessCheckTask;
+   };
+ 
+   // The state of an individual client session (using one or more sequential TCP connections) handled by a server:
+-- 
+1.9.1
+
